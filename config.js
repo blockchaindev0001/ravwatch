@@ -25,6 +25,11 @@ module.exports = {
   YT_VIDEO_ID: process.env.YT_VIDEO_ID || '',
   // How long to cache the "what's live now" lookup (ms).
   LIVE_CACHE_MS: Number(process.env.LIVE_CACHE_MS || 60000),
+  // OPTIONAL but recommended for deployed servers: a YouTube Data API v3 key.
+  // Makes "is RAV live now" detection reliable & IP-independent (the keyless
+  // HTML-scrape can be served different/blocked content from a datacenter IP).
+  // Get one free: Google Cloud Console -> APIs -> YouTube Data API v3.
+  YT_API_KEY: process.env.YT_API_KEY || '',
 
   // --- Earning mechanics (server-authoritative) --------------------------
   // One point per TICK_SECONDS of real, continuous, foreground watch time.

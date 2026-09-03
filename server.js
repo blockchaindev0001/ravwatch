@@ -110,25 +110,53 @@ app.get('/api/config', (_req, res) => {
 // the browser) because it just needs a plain HTTP GET of the YouTube page.
 let liveCache = { at: 0, live: false, videoId: null, title: null };
 
+const YT_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+  'Accept-Language': 'en-US,en;q=0.9',
+  // Bypass YouTube's consent interstitial that datacenter IPs (Render) often hit.
+  Cookie: 'CONSENT=YES+1; SOCS=CAI',
+};
+
+// Authoritative path: YouTube Data API (IP-independent, reliable on any host).
+async function resolveViaApi() {
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${cfg.YT_CHANNEL_ID}&eventType=live&type=video&maxResults=1&key=${cfg.YT_API_KEY}`;
+  const r = await fetch(url);
+  const data = await r.json();
+  const item = data.items && data.items[0];
+  if (item && item.id && item.id.videoId) {
+    return { live: true, videoId: item.id.videoId, title: (item.snippet && item.snippet.title) || null };
+  }
+  return { live: false, videoId: null, title: null };
+}
+
+// Keyless path: find the channel's candidate video, then CONFIRM it is truly
+// live now on its own watch page (channel /live page lacks that flag and is
+// true even for scheduled premieres).
+async function resolveViaScrape() {
+  const chan = await fetch(`https://www.youtube.com/channel/${cfg.YT_CHANNEL_ID}/live?hl=en&gl=US`, { headers: YT_HEADERS });
+  const chanHtml = await chan.text();
+  const canon = chanHtml.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([A-Za-z0-9_-]{11})">/);
+  const vid = canon ? canon[1] : (chanHtml.match(/"videoId":"([A-Za-z0-9_-]{11})"/) || [])[1] || null;
+  if (!vid) return { live: false, videoId: null, title: null };
+
+  const watch = await fetch(`https://www.youtube.com/watch?v=${vid}&hl=en&gl=US`, { headers: YT_HEADERS });
+  const wHtml = await watch.text();
+  const liveNow = /"isLiveNow":true/.test(wHtml);
+  const upcoming = /"isUpcoming":true/.test(wHtml);
+  const ended = /"actualEndTime"/.test(wHtml);
+  const title = ((wHtml.match(/<title>([^<]*)<\/title>/) || [])[1] || '').replace(/ - YouTube$/, '').trim() || null;
+  const isLive = liveNow && !upcoming && !ended;
+  return { live: isLive, videoId: isLive ? vid : null, title };
+}
+
 async function resolveLive() {
   if (cfg.YT_VIDEO_ID) {
     return { live: true, videoId: cfg.YT_VIDEO_ID, title: 'RAV (manual)' };
   }
   if (Date.now() - liveCache.at < cfg.LIVE_CACHE_MS) return liveCache;
   try {
-    const url = `https://www.youtube.com/channel/${cfg.YT_CHANNEL_ID}/live`;
-    const r = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    });
-    const html = await r.text();
-    const isLive = /"isLiveNow":true|"isLive":true/.test(html);
-    const canon = html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([A-Za-z0-9_-]{11})">/);
-    const vid = canon ? canon[1] : (html.match(/"videoId":"([A-Za-z0-9_-]{11})"/) || [])[1] || null;
-    const title = ((html.match(/<title>([^<]*)<\/title>/) || [])[1] || '').replace(/ - YouTube$/, '').trim() || null;
-    liveCache = { at: Date.now(), live: !!(isLive && vid), videoId: vid, title };
+    const res = cfg.YT_API_KEY ? await resolveViaApi() : await resolveViaScrape();
+    liveCache = { at: Date.now(), ...res };
   } catch (_) {
     liveCache = { ...liveCache, at: Date.now() }; // keep last known; retry next window
   }
