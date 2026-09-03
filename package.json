@@ -1,0 +1,18 @@
+{
+  "name": "ravwatch",
+  "version": "1.0.0",
+  "description": "RAV watch-to-earn: stream the show, earn points for time actually watched.",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0",
+    "express": "^4.19.2"
+  }
+}

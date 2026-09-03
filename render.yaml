@@ -1,0 +1,31 @@
+# Render blueprint for RAV Watch & Earn.
+# In Render: New + -> Blueprint -> connect this repo. It reads this file.
+services:
+  - type: web
+    name: ravwatch
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/config
+    envVars:
+      - key: COOKIE_SECURE
+        value: "true"
+      # Store the JSON database on the persistent disk mounted below.
+      - key: DATA_DIR
+        value: "/data"
+      # A stable session secret so logins survive restarts. Render can generate one:
+      - key: SESSION_SECRET
+        generateValue: true
+      # Fill these in from Cloudflare -> Turnstile once you have the deployed URL:
+      - key: TURNSTILE_SITE_KEY
+        sync: false
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+    # Persistent disk so points/accounts survive redeploys (free tier: 1GB).
+    disk:
+      name: ravwatch-data
+      mountPath: /data
+      sizeGB: 1
+    # Point the JSON store at the persistent disk.
+    # (set as an env var too because disks mount at runtime)

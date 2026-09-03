@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RAV Watch &amp; Earn</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #283040;
+    --text: #e6edf3; --muted: #9aa7b4; --accent: #d7263d; --accent2: #1f6feb;
+    --good: #2ea043; --warn: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 5;
+  }
+  header .brand { font-weight: 800; font-size: 18px; letter-spacing: .3px; }
+  header .brand .dot { color: var(--accent); }
+  .live {
+    font-size: 11px; font-weight: 800; letter-spacing: .5px; color: #fff;
+    background: var(--accent); border-radius: 4px; padding: 2px 6px; margin-left: 6px;
+  }
+  header .spacer { flex: 1; }
+  .pill {
+    background: #0d1117; border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 14px; font-weight: 700;
+  }
+  .pill b { color: var(--good); }
+  button {
+    background: var(--accent2); color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 14px; font-weight: 600; cursor: pointer; font-size: 14px;
+  }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button:disabled { opacity: .5; cursor: default; }
+  main { max-width: 1080px; margin: 0 auto; padding: 20px; }
+  .grid { display: grid; grid-template-columns: 1fr 320px; gap: 20px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  .nowplaying {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;
+  }
+  .npdot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 10px var(--accent); flex: none; }
+  .npdot.off { background: #555; box-shadow: none; }
+  .npchannel { font-weight: 800; font-size: 18px; }
+  .npshow { color: var(--muted); font-size: 14px; }
+  .videoWrap {
+    position: relative; width: 100%; aspect-ratio: 16/9; background: #000;
+    border-radius: 12px; overflow: hidden; border: 1px solid var(--border);
+  }
+  .videoWrap #player, .videoWrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  /* "Still watching?" overlay */
+  .overlay {
+    position: absolute; inset: 0; background: rgba(5,8,12,.86); z-index: 3;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; gap: 14px; padding: 20px;
+  }
+  .overlay h3 { margin: 0; font-size: 22px; }
+  .overlay p { margin: 0; color: var(--muted); max-width: 340px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin: 0 0 12px; }
+  .status { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 14px; }
+  .led { width: 10px; height: 10px; border-radius: 50%; background: #555; flex: none; }
+  .led.on { background: var(--good); box-shadow: 0 0 10px var(--good); }
+  .led.warn { background: var(--warn); box-shadow: 0 0 10px var(--warn); }
+  .earnRow { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .earnRow:last-child { border-bottom: 0; }
+  .big { font-size: 34px; font-weight: 800; color: var(--good); }
+  .note { color: var(--muted); font-size: 12px; margin: 12px 0 0; line-height: 1.4; }
+  input {
+    width: 100%; padding: 10px 12px; margin: 6px 0 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: #0d1117; color: var(--text); font-size: 14px;
+  }
+  .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .tabs button { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .err { color: #ff6b6b; font-size: 13px; min-height: 18px; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); font-size: 14px; }
+  th { color: var(--muted); font-weight: 600; }
+  td.r, th.r { text-align: right; }
+  .me { color: var(--good); font-weight: 700; }
+  footer { color: var(--muted); font-size: 12px; text-align: center; padding: 24px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot">●</span> <span id="siteName">RAV Watch &amp; Earn</span><span class="live">LIVE</span></div>
+  <div class="spacer"></div>
+  <div id="pointsPill" class="pill hidden">Points: <b id="pointsHdr">0</b></div>
+  <span id="whoami" class="hidden" style="color:var(--muted)"></span>
+  <button id="logoutBtn" class="ghost hidden">Disconnect</button>
+</header>
+
+<main>
+  <div class="grid">
+    <div>
+      <!-- Now playing: the real channel name + current live show -->
+      <div class="nowplaying">
+        <span id="npDot" class="npdot"></span>
+        <span class="npchannel" id="channelName">Real America's Voice</span>
+        <span class="npshow" id="showTitle"></span>
+      </div>
+      <div class="videoWrap">
+        <!-- YouTube IFrame player mounts here -->
+        <div id="player"></div>
+        <!-- "Still watching?" active-presence gate -->
+        <div id="overlay" class="overlay hidden">
+          <h3>Still watching?</h3>
+          <p>Confirm you're still here to keep earning points.</p>
+          <button id="stillHere">I'm still watching</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="status">
+          <span id="led" class="led"></span>
+          <span id="statusText">Log in to start earning while you watch.</span>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <!-- logged out: connect wallet -->
+      <div id="authCard" class="card">
+        <h2>Connect to earn</h2>
+        <p class="note" style="margin-top:0">Connect an EVM wallet (MetaMask). Your points are saved to your wallet address — reconnect any time to pick up where you left off. It costs no gas.</p>
+        <button id="connectBtn" style="width:100%">Connect Wallet</button>
+        <div id="authErr" class="err"></div>
+      </div>
+
+      <!-- first connect: choose a username -->
+      <div id="nameCard" class="card hidden">
+        <h2>Choose a username</h2>
+        <p class="note" style="margin-top:0">Shown on the leaderboard for wallet <span id="nameWallet"></span>.</p>
+        <input id="newUsername" placeholder="username" autocomplete="off" />
+        <button id="saveUsername" style="width:100%">Save &amp; start earning</button>
+        <div id="nameErr" class="err"></div>
+      </div>
+
+      <!-- logged in: earnings -->
+      <div id="earnCard" class="card hidden">
+        <h2>Your earnings</h2>
+        <div class="big"><span id="pointsBig">0</span> <span style="font-size:16px;color:var(--muted)">pts</span></div>
+        <div class="earnRow"><span>Wallet</span><span id="walletShort" title="">—</span></div>
+        <div class="earnRow"><span>Watch time</span><span id="watchTime">0m 0s</span></div>
+        <div class="earnRow"><span>Rate</span><span id="rate">1 pt / 30s</span></div>
+        <div class="earnRow"><span>Next point in</span><span id="countdown">—</span></div>
+        <div id="cfWidget" style="margin-top:12px"></div>
+        <p class="note">Points are earned only for real, foreground time with the stream actually playing. A human check runs periodically to keep out bots.</p>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h2>Leaderboard</h2>
+        <table>
+          <thead><tr><th>#</th><th>Viewer</th><th class="r">Points</th></tr></thead>
+          <tbody id="lbBody"><tr><td colspan="3" style="color:var(--muted)">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
