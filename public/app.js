@@ -249,16 +249,26 @@ async function startWatchSession() {
   }
 }
 
-// Keep the token fresh; re-CAPTCHA on the configured cadence.
+// Keep the token fresh. CAPTCHA is solved ONCE at session start; after that we
+// just rotate the token via /api/watch/refresh (no CAPTCHA), so the widget is
+// not reset over and over. Re-CAPTCHA only if the token chain actually breaks.
 async function refreshWatchToken() {
-  if (!watchToken) return startWatchSession();
-  if (cfg.captchaEnabled && Date.now() - lastCaptchaAt > cfg.captchaEveryMs) return startWatchSession();
+  if (!watchToken) return maybeStartSession();
   try {
     const r = await api('/api/watch/refresh', { method: 'POST', headers: { 'X-Watch-Token': watchToken } });
     watchToken = r.watchToken;
     watchTokenExp = Date.now() + r.ttlMs;
     return true;
-  } catch (_) { return startWatchSession(); }
+  } catch (_) { return maybeStartSession(); }
+}
+
+// Attempt a fresh CAPTCHA-gated session start, but no more often than every 20s
+// so a rejected token can't spin the widget in a "Verifying…" loop.
+let lastSessionAttempt = 0;
+async function maybeStartSession() {
+  if (Date.now() - lastSessionAttempt < 20000) return false;
+  lastSessionAttempt = Date.now();
+  return startWatchSession();
 }
 
 // ===========================================================================
@@ -446,8 +456,8 @@ function setLoggedIn(user) {
   const who = $('whoami'); who.classList.remove('hidden'); who.textContent = displayName(user);
   const w = $('walletShort'); if (w) { w.textContent = shortAddr(user.address); w.title = user.address; }
   presenceOK = true; activeMsSincePrompt = 0;
-  watchToken = null; watchTokenExp = 0; lastCaptchaAt = 0;
-  startWatchSession(); // CAPTCHA -> first rotating watch token
+  watchToken = null; watchTokenExp = 0; lastCaptchaAt = 0; lastSessionAttempt = 0;
+  maybeStartSession(); // CAPTCHA -> first rotating watch token
   renderPoints();
   renderLeaderboard();
   startLoops();
