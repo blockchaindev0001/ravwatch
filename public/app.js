@@ -88,7 +88,13 @@ function buildPlayerWhenReady() {
     },
     events: {
       onReady: () => { playerReady = true; },
-      onStateChange: (e) => { playerPlaying = (e.data === YT.PlayerState.PLAYING); },
+      onStateChange: (e) => {
+        playerPlaying = (e.data === YT.PlayerState.PLAYING);
+        // A recording finished -> loop it from the start so earning continues.
+        if (e.data === YT.PlayerState.ENDED && streamMode === 'replay' && ytPlayer) {
+          try { lastMediaTime = -1; ytPlayer.seekTo(0, true); ytPlayer.playVideo(); } catch (_) {}
+        }
+      },
       onError: () => { playerFailed = true; },
     },
   });
