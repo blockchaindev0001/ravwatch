@@ -460,10 +460,11 @@ async function connectWallet() {
   let provider = window.ethereum || null;
 
   // No injected wallet -> try WalletConnect (works in any browser).
+  let usingWC = false;
   if (!provider && cfg.walletConnectProjectId) {
     try {
       provider = await initWalletConnect();
-      if (provider) { $('authErr').textContent = 'Opening your wallet…'; await provider.enable(); }
+      usingWC = !!provider;
     } catch (e) {
       $('authErr').textContent = (e && e.message) || 'Wallet connection cancelled.';
       return;
@@ -486,10 +487,20 @@ async function connectWallet() {
   const btn = $('connectBtn');
   btn.disabled = true; btn.textContent = 'Connecting…';
   try {
-    let accounts = await provider.request({ method: 'eth_requestAccounts' });
-    if ((!accounts || !accounts.length) && provider.accounts) accounts = provider.accounts;
+    // Connect ONCE. For WalletConnect, enable() opens the wallet picker / deep-
+    // link and returns the accounts — do NOT also call eth_requestAccounts (that
+    // re-opens the picker, which is the "select wallet again" bug).
+    let accounts;
+    if (usingWC) {
+      $('authErr').textContent = 'Opening your wallet…';
+      accounts = await provider.enable();
+      if ((!accounts || !accounts.length) && provider.accounts) accounts = provider.accounts;
+    } else {
+      accounts = await provider.request({ method: 'eth_requestAccounts' });
+    }
     const address = accounts && accounts[0];
     if (!address) throw new Error('No account selected.');
+    $('authErr').textContent = usingWC ? 'Open your wallet app to sign in…' : '';
     // 1) get the message to sign, 2) sign it, 3) verify server-side.
     const { message } = await api('/api/wallet/nonce', { method: 'POST', body: JSON.stringify({ address }) });
     const signature = await provider.request({ method: 'personal_sign', params: [message, address] });

@@ -175,7 +175,16 @@
 </main>
 
 <!-- WalletConnect (lets mobile browsers connect a wallet app without an extension) -->
-<script>window.global = window.global || window; window.process = window.process || { env: {} };</script>
+<script>
+  window.global = window.global || window;
+  window.process = window.process || {};
+  window.process.env = window.process.env || {};
+  window.process.nextTick = window.process.nextTick || function (cb) { setTimeout(cb, 0); };
+  window.process.version = window.process.version || '';
+  window.process.versions = window.process.versions || {};
+  window.process.browser = true;
+  window.process.platform = window.process.platform || 'browser';
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider@2.13.3/dist/index.umd.js"></script>
 <script src="/app.js"></script>
 </body>
