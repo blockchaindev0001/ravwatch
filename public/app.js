@@ -212,14 +212,16 @@ function solveCaptcha() {
   return new Promise((resolve) => {
     if (!cfg.captchaEnabled) return resolve('disabled');
     if (cfWidgetId === null) return resolve(null);
-    // Reuse the current token only if it hasn't been spent yet.
     let existing = null;
     try { existing = window.turnstile.getResponse(cfWidgetId); } catch (_) {}
+    // A fresh, unspent token is ready -> use it.
     if (existing && !cfTokenUsed) return resolve(existing);
-    // Otherwise get a brand-new token (tokens are single-use).
+    // Otherwise wait for the widget's callback. Only RESET if the previous
+    // token was already spent — never interrupt a verification in progress
+    // (that was causing the endless "Verifying…" loop).
     cfPending = resolve;
-    try { window.turnstile.reset(cfWidgetId); } catch (_) {}
-    setTimeout(() => { if (cfPending) { cfPending = null; resolve(null); } }, 20000);
+    if (existing && cfTokenUsed) { try { window.turnstile.reset(cfWidgetId); } catch (_) {} }
+    setTimeout(() => { if (cfPending) { cfPending = null; resolve(null); } }, 25000);
   });
 }
 
@@ -266,6 +268,8 @@ async function refreshWatchToken() {
 // so a rejected token can't spin the widget in a "Verifying…" loop.
 let lastSessionAttempt = 0;
 async function maybeStartSession() {
+  // Widget not rendered yet? Don't burn the backoff window — retry soon.
+  if (cfg.captchaEnabled && cfWidgetId === null) return false;
   if (Date.now() - lastSessionAttempt < 20000) return false;
   lastSessionAttempt = Date.now();
   return startWatchSession();
