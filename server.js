@@ -109,6 +109,7 @@ app.get('/api/config', (_req, res) => {
 // Server-side lookup of the channel's current live video id. Done here (not in
 // the browser) because it just needs a plain HTTP GET of the YouTube page.
 let liveCache = { at: 0, live: false, videoId: null, title: null };
+const lastResolve = { source: null, apiError: null }; // diagnostics for /api/live?debug=1
 
 const YT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
@@ -180,13 +181,18 @@ async function resolveViaApi() {
 // live now on its own watch page (channel /live page lacks that flag and is
 // true even for scheduled premieres).
 async function watchStatus(vid) {
-  const watch = await fetch(`https://www.youtube.com/watch?v=${vid}&hl=en&gl=US`, { headers: YT_HEADERS });
+  // bpctr/has_verified skip the "content warning"/consent interstitial that
+  // datacenter IPs get (which otherwise yields a page with no real flags).
+  const watch = await fetch(`https://www.youtube.com/watch?v=${vid}&hl=en&gl=US&bpctr=9999999999&has_verified=1`, { headers: YT_HEADERS });
   const w = await watch.text();
+  let title = ((w.match(/<title>([^<]*)<\/title>/) || [])[1] || '').replace(/ - YouTube$/, '').trim();
+  if (/^https?:\/\//i.test(title)) title = ''; // consent/redirect page leaked the URL as title
   return {
-    liveNow: /"isLiveNow":true/.test(w),
+    // A currently-live stream exposes an HLS manifest; ended/upcoming do not.
+    liveNow: /"isLiveNow":true/.test(w) || /"hlsManifestUrl":"/.test(w),
     upcoming: /"isUpcoming":true/.test(w),
     ended: /"actualEndTime"/.test(w),
-    title: ((w.match(/<title>([^<]*)<\/title>/) || [])[1] || '').replace(/ - YouTube$/, '').trim() || null,
+    title: title || null,
   };
 }
 
@@ -225,12 +231,15 @@ async function resolveLive() {
     // authoritative, IP-independent live/replay classification. Without a key, or
     // if the API errors, fall back to the keyless watch-page scrape.
     let res = null;
+    lastResolve.apiError = null;
+    lastResolve.source = null;
     if (cfg.YT_API_KEY) {
-      try { res = await resolveViaApi(); } catch (_) { res = null; }
+      try { res = await resolveViaApi(); lastResolve.source = 'api'; }
+      catch (e) { res = null; lastResolve.apiError = e.message || String(e); }
     }
     if (!res || res.mode === 'offline') {
       const scraped = await resolveViaScrape();
-      if (!res || scraped.mode !== 'offline') res = scraped;
+      if (!res || scraped.mode !== 'offline') { res = scraped; lastResolve.source = 'scrape'; }
     }
     liveCache = { at: Date.now(), ...res };
   } catch (_) {
@@ -239,9 +248,11 @@ async function resolveLive() {
   return liveCache;
 }
 
-app.get('/api/live', async (_req, res) => {
+app.get('/api/live', async (req, res) => {
   const s = await resolveLive();
-  res.json({ mode: s.mode || (s.live ? 'live' : 'offline'), live: s.live, videoId: s.videoId, title: s.title });
+  const out = { mode: s.mode || (s.live ? 'live' : 'offline'), live: s.live, videoId: s.videoId, title: s.title };
+  if (req.query.debug) { out.source = lastResolve.source; out.apiError = lastResolve.apiError; out.hasApiKey = !!cfg.YT_API_KEY; }
+  res.json(out);
 });
 
 // --- wallet auth (Sign-In-With-Ethereum) + anti-bot layers -----------------
