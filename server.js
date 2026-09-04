@@ -281,7 +281,7 @@ app.get('/api/me', (req, res) => {
 // Start (or re-verify) a session: requires a fresh CAPTCHA token.
 app.post('/api/watch/start', requireAuth, async (req, res) => {
   const cap = await verifyCaptcha((req.body || {}).captchaToken, clientIp(req));
-  if (!cap.ok) return res.status(403).json({ error: 'CAPTCHA failed — please try again.', reason: cap.reason });
+  if (!cap.ok) return res.status(403).json({ error: `CAPTCHA rejected (${cap.reason || 'unknown'})`, reason: cap.reason });
   const token = issueWatchToken(SECRET, req.user.address.toLowerCase(), cfg.WATCH_TOKEN_TTL_MS);
   res.json({ watchToken: token, ttlMs: cfg.WATCH_TOKEN_TTL_MS, refreshMs: cfg.WATCH_REFRESH_MS, captchaEveryMs: cfg.CAPTCHA_EVERY_MS });
 });

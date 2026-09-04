@@ -31,6 +31,8 @@ let cfPending = null;          // resolver awaiting a fresh CAPTCHA token
 let watchToken = null;         // current rotating watch token
 let watchTokenExp = 0;         // ms epoch when it expires
 let lastCaptchaAt = 0;         // last time a full CAPTCHA was solved
+let cfTokenUsed = false;       // Turnstile tokens are single-use
+let lastWatchError = null;     // human-readable reason the watch session failed
 
 const $ = (id) => document.getElementById(id);
 
@@ -172,7 +174,11 @@ function notEarningReason() {
   if (!playerReady) return 'Waiting for the live stream to load…';
   if (!playerPlaying) return 'Paused — press play on the live stream to earn.';
   if (!mediaAdvancing) return 'Buffering — earning resumes when the stream plays.';
-  if (cfg.captchaEnabled && !watchToken) return 'Verifying you are human — complete the check to earn.';
+  if (cfg.captchaEnabled && !watchToken) {
+    return lastWatchError
+      ? 'Human check failed: ' + lastWatchError + ' — see the check above.'
+      : 'Verifying you are human — complete the check to earn.';
+  }
   return '';
 }
 
@@ -187,7 +193,7 @@ function initTurnstile() {
         cfWidgetId = window.turnstile.render('#cfWidget', {
           sitekey: cfg.turnstileSiteKey,
           size: 'flexible',
-          callback: (tok) => { if (cfPending) { cfPending(tok); cfPending = null; } },
+          callback: (tok) => { cfTokenUsed = false; if (cfPending) { cfPending(tok); cfPending = null; } },
           'error-callback': () => { if (cfPending) { cfPending(null); cfPending = null; } },
         });
         resolve(true);
@@ -201,36 +207,46 @@ function initTurnstile() {
   });
 }
 
-// Resolve a CAPTCHA token (or 'disabled' when CAPTCHA is off, or null on failure).
+// Resolve a FRESH single-use CAPTCHA token ('disabled' if off, null on failure).
 function solveCaptcha() {
   return new Promise((resolve) => {
     if (!cfg.captchaEnabled) return resolve('disabled');
     if (cfWidgetId === null) return resolve(null);
+    // Reuse the current token only if it hasn't been spent yet.
     let existing = null;
     try { existing = window.turnstile.getResponse(cfWidgetId); } catch (_) {}
-    if (existing) return resolve(existing);
+    if (existing && !cfTokenUsed) return resolve(existing);
+    // Otherwise get a brand-new token (tokens are single-use).
     cfPending = resolve;
     try { window.turnstile.reset(cfWidgetId); } catch (_) {}
-    setTimeout(() => { if (cfPending) { cfPending = null; resolve(null); } }, 8000);
+    setTimeout(() => { if (cfPending) { cfPending = null; resolve(null); } }, 20000);
   });
 }
 
 // Start (or CAPTCHA-re-verify) an earning session.
 async function startWatchSession() {
   const captchaToken = await solveCaptcha();
-  if (cfg.captchaEnabled && (!captchaToken || captchaToken === 'disabled') && captchaToken !== 'disabled') {
-    watchToken = null; return false; // couldn't solve CAPTCHA
+  if (cfg.captchaEnabled && !captchaToken) {
+    lastWatchError = 'no CAPTCHA response (complete the check above)';
+    watchToken = null; return false;
   }
   try {
     const r = await api('/api/watch/start', {
       method: 'POST',
       body: JSON.stringify({ captchaToken: captchaToken === 'disabled' ? undefined : captchaToken }),
     });
+    cfTokenUsed = true;            // this token is now spent
     watchToken = r.watchToken;
     watchTokenExp = Date.now() + r.ttlMs;
     lastCaptchaAt = Date.now();
+    lastWatchError = null;
     return true;
-  } catch (_) { watchToken = null; return false; }
+  } catch (e) {
+    cfTokenUsed = true;            // token was consumed by the failed attempt
+    lastWatchError = e.message || 'watch session failed';
+    console.warn('[ravwatch] watch/start failed:', e.message);
+    watchToken = null; return false;
+  }
 }
 
 // Keep the token fresh; re-CAPTCHA on the configured cadence.
