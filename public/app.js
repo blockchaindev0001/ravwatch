@@ -419,6 +419,14 @@ function displayName(user) {
 async function connectWallet() {
   $('authErr').textContent = '';
   if (!window.ethereum) {
+    // Mobile browsers have no wallet extension. Deep-link into the MetaMask app's
+    // built-in browser, where a provider IS injected, so Connect works there.
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    if (isMobile) {
+      $('authErr').textContent = 'Opening in the MetaMask app…';
+      window.location.href = 'https://metamask.app.link/dapp/' + location.host + location.pathname;
+      return;
+    }
     $('authErr').innerHTML = 'No EVM wallet found. <a href="https://metamask.io/download/" target="_blank" rel="noopener" style="color:var(--accent2)">Install MetaMask</a>, then reload.';
     return;
   }
