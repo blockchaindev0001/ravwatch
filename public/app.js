@@ -27,12 +27,13 @@ let activeMsSincePrompt = 0;
 
 // --- anti-bot: CAPTCHA + rotating watch token ------------------------------
 let cfWidgetId = null;         // Turnstile widget id
-let cfPending = null;          // resolver awaiting a fresh CAPTCHA token
+let cfToken = null;            // latest token from the widget's callback
+let cfTokenUsed = false;       // Turnstile tokens are single-use
 let watchToken = null;         // current rotating watch token
 let watchTokenExp = 0;         // ms epoch when it expires
 let lastCaptchaAt = 0;         // last time a full CAPTCHA was solved
-let cfTokenUsed = false;       // Turnstile tokens are single-use
 let lastWatchError = null;     // human-readable reason the watch session failed
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const $ = (id) => document.getElementById(id);
 
@@ -199,8 +200,11 @@ function initTurnstile() {
         cfWidgetId = window.turnstile.render('#cfWidget', {
           sitekey: cfg.turnstileSiteKey,
           size: 'flexible',
-          callback: (tok) => { cfTokenUsed = false; if (cfPending) { cfPending(tok); cfPending = null; } },
-          'error-callback': () => { if (cfPending) { cfPending(null); cfPending = null; } },
+          // Just capture tokens as the widget produces them. Turnstile refreshes
+          // them on its own; we never reset it mid-verification.
+          callback: (tok) => { cfToken = tok; cfTokenUsed = false; },
+          'expired-callback': () => { cfToken = null; },
+          'error-callback': () => { cfToken = null; },
         });
         resolve(true);
       } catch (_) { resolve(false); }
@@ -213,29 +217,31 @@ function initTurnstile() {
   });
 }
 
-// Resolve a FRESH single-use CAPTCHA token ('disabled' if off, null on failure).
-function solveCaptcha() {
-  return new Promise((resolve) => {
-    if (!cfg.captchaEnabled) return resolve('disabled');
-    if (cfWidgetId === null) return resolve(null);
-    let existing = null;
-    try { existing = window.turnstile.getResponse(cfWidgetId); } catch (_) {}
-    // A fresh, unspent token is ready -> use it.
-    if (existing && !cfTokenUsed) return resolve(existing);
-    // Otherwise wait for the widget's callback. Only RESET if the previous
-    // token was already spent — never interrupt a verification in progress
-    // (that was causing the endless "Verifying…" loop).
-    cfPending = resolve;
-    if (existing && cfTokenUsed) { try { window.turnstile.reset(cfWidgetId); } catch (_) {} }
-    setTimeout(() => { if (cfPending) { cfPending = null; resolve(null); } }, 25000);
-  });
+// Wait (up to timeoutMs) for a fresh, unspent CAPTCHA token from the widget's
+// callback. Never resets the widget, so an in-progress verification completes.
+// Returns 'disabled' when CAPTCHA is off, or null if none arrived in time.
+async function getFreshCaptcha(timeoutMs = 20000) {
+  if (!cfg.captchaEnabled) return 'disabled';
+  if (cfWidgetId === null) return null;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (cfToken && !cfTokenUsed) return cfToken;
+    await sleep(300);
+  }
+  return null;
+}
+
+// Force the widget to mint a NEW token (only after a spent/failed one).
+function newCaptchaToken() {
+  cfToken = null; cfTokenUsed = false;
+  try { window.turnstile.reset(cfWidgetId); } catch (_) {}
 }
 
 // Start (or CAPTCHA-re-verify) an earning session.
 async function startWatchSession() {
-  const captchaToken = await solveCaptcha();
+  const captchaToken = await getFreshCaptcha();
   if (cfg.captchaEnabled && !captchaToken) {
-    lastWatchError = 'no CAPTCHA response (complete the check above)';
+    lastWatchError = 'no CAPTCHA response (let the check finish)';
     watchToken = null; return false;
   }
   try {
@@ -250,9 +256,9 @@ async function startWatchSession() {
     lastWatchError = null;
     return true;
   } catch (e) {
-    cfTokenUsed = true;            // token was consumed by the failed attempt
     lastWatchError = e.message || 'watch session failed';
     console.warn('[ravwatch] watch/start failed:', e.message);
+    newCaptchaToken();             // spent/failed -> mint a fresh one for the retry
     watchToken = null; return false;
   }
 }

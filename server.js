@@ -117,24 +117,61 @@ const YT_HEADERS = {
   Cookie: 'CONSENT=YES+1; SOCS=CAI',
 };
 
-// Authoritative path: YouTube Data API (IP-independent, reliable on any host).
-async function apiSearch(eventType) {
-  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${cfg.YT_CHANNEL_ID}&eventType=${eventType}&type=video&order=date&maxResults=1&key=${cfg.YT_API_KEY}`;
-  const r = await fetch(url);
-  const data = await r.json();
-  const item = data.items && data.items[0];
-  if (item && item.id && item.id.videoId) {
-    return { videoId: item.id.videoId, title: (item.snippet && item.snippet.title) || null };
-  }
-  return null;
+// Collect candidate video ids cheaply by scraping the channel's /live and
+// /streams pages (free). We do NOT trust these for status — only as a list of
+// ids to ask the Data API about.
+async function candidateIds() {
+  const out = { liveCandidate: null, streamIds: [] };
+  try {
+    const chan = await fetch(`https://www.youtube.com/channel/${cfg.YT_CHANNEL_ID}/live?hl=en&gl=US`, { headers: YT_HEADERS });
+    const h = await chan.text();
+    const m = h.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([A-Za-z0-9_-]{11})">/);
+    out.liveCandidate = m ? m[1] : (h.match(/"videoId":"([A-Za-z0-9_-]{11})"/) || [])[1] || null;
+  } catch (_) { /* ignore */ }
+  try {
+    const st = await fetch(`https://www.youtube.com/channel/${cfg.YT_CHANNEL_ID}/streams?hl=en&gl=US`, { headers: YT_HEADERS });
+    const h = await st.text();
+    out.streamIds = [...new Set((h.match(/"videoId":"([A-Za-z0-9_-]{11})"/g) || []).map((m) => m.slice(11, 22)))].slice(0, 12);
+  } catch (_) { /* ignore */ }
+  return out;
 }
 
+// Authoritative status for a batch of ids — ONE videos.list call = 1 quota unit
+// (up to 50 ids). liveBroadcastContent is 'live' | 'upcoming' | 'none'.
+async function apiVideoStatuses(ids) {
+  if (!ids.length) return {};
+  const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id=${ids.join(',')}&key=${cfg.YT_API_KEY}`;
+  const r = await fetch(url);
+  const data = await r.json();
+  if (data.error) throw new Error('yt-api-' + (data.error.errors && data.error.errors[0] && data.error.errors[0].reason));
+  const map = {};
+  for (const it of data.items || []) {
+    map[it.id] = {
+      status: it.snippet && it.snippet.liveBroadcastContent, // live | upcoming | none
+      title: (it.snippet && it.snippet.title) || null,
+      ended: !!(it.liveStreamingDetails && it.liveStreamingDetails.actualEndTime),
+    };
+  }
+  return map;
+}
+
+// Cheap + reliable resolver: scrape candidate ids, then one videos.list call.
 async function resolveViaApi() {
-  const live = await apiSearch('live');
-  if (live) return { mode: 'live', live: true, videoId: live.videoId, title: live.title };
+  const { liveCandidate, streamIds } = await candidateIds();
+  const ids = [...new Set([liveCandidate, ...streamIds].filter(Boolean))];
+  if (!ids.length) return { mode: 'offline', live: false, videoId: null, title: null };
+  const st = await apiVideoStatuses(ids); // 1 unit
+
+  // Live: prefer the /live candidate; otherwise any candidate the API says is live.
+  const liveId = (liveCandidate && st[liveCandidate] && st[liveCandidate].status === 'live')
+    ? liveCandidate
+    : ids.find((id) => st[id] && st[id].status === 'live');
+  if (liveId) return { mode: 'live', live: true, videoId: liveId, title: st[liveId].title };
+
+  // Replay: the most recent finished broadcast (status 'none'), in /streams order.
   if (cfg.REPLAY_WHEN_OFFLINE) {
-    const done = await apiSearch('completed'); // most recent finished broadcast
-    if (done) return { mode: 'replay', live: false, videoId: done.videoId, title: done.title };
+    const repId = streamIds.find((id) => st[id] && st[id].status === 'none');
+    if (repId) return { mode: 'replay', live: false, videoId: repId, title: st[repId].title };
   }
   return { mode: 'offline', live: false, videoId: null, title: null };
 }
@@ -184,15 +221,16 @@ async function resolveLive() {
   }
   if (Date.now() - liveCache.at < cfg.LIVE_CACHE_MS) return liveCache;
   try {
-    // Free HTML method is primary (unlimited). The Data API costs 100 units per
-    // search.list call and the free quota is only 10k/day, so use it ONLY as a
-    // fallback when scraping comes up empty.
-    let res = await resolveViaScrape();
-    if (res.mode === 'offline' && cfg.YT_API_KEY) {
-      try {
-        const apiRes = await resolveViaApi();
-        if (apiRes.mode !== 'offline') res = apiRes;
-      } catch (_) { /* API quota/error -> keep scrape result */ }
+    // With an API key: scrape candidate ids (free) + ONE videos.list (1 unit) for
+    // authoritative, IP-independent live/replay classification. Without a key, or
+    // if the API errors, fall back to the keyless watch-page scrape.
+    let res = null;
+    if (cfg.YT_API_KEY) {
+      try { res = await resolveViaApi(); } catch (_) { res = null; }
+    }
+    if (!res || res.mode === 'offline') {
+      const scraped = await resolveViaScrape();
+      if (!res || scraped.mode !== 'offline') res = scraped;
     }
     liveCache = { at: Date.now(), ...res };
   } catch (_) {
