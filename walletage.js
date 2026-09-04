@@ -33,11 +33,17 @@ async function rpc(url, method, params) {
   return data.result;
 }
 
-// Keyless: number of transactions the wallet has SENT on Robinhood Chain.
-async function sentTxCount(address) {
-  const hex = await rpc(cfg.WALLET_RPC_URL, 'eth_getTransactionCount', [address, 'latest']);
-  if (typeof hex !== 'string') throw new Error('rpc-unavailable');
-  return parseInt(hex, 16);
+// Keyless Robinhood Chain history: the wallet counts as "has history" if it has
+// SENT at least FALLBACK_MIN_TX txs OR currently holds a balance (received) on
+// Robinhood Chain. Both come from the public RPC, no key needed.
+async function robinhoodHistory(address) {
+  const [nonceHex, balHex] = await Promise.all([
+    rpc(cfg.WALLET_RPC_URL, 'eth_getTransactionCount', [address, 'latest']),
+    rpc(cfg.WALLET_RPC_URL, 'eth_getBalance', [address, 'latest']),
+  ]);
+  const txCount = typeof nonceHex === 'string' ? parseInt(nonceHex, 16) : 0;
+  const balance = typeof balHex === 'string' ? BigInt(balHex) : 0n;
+  return { txCount, hasBalance: balance > 0n, ok: txCount >= cfg.FALLBACK_MIN_TX || balance > 0n };
 }
 
 // Alchemy: timestamp (ms) of the wallet's FIRST transfer (in or out), or 0.
@@ -78,9 +84,8 @@ async function checkWalletAge(address) {
         result = { ok, ageHours: Math.round(ageHours), reason: ok ? 'ok' : 'too-new' };
       }
     } else {
-      const n = await sentTxCount(address);
-      const ok = n >= cfg.FALLBACK_MIN_TX;
-      result = { ok, ageHours: null, txCount: n, fallback: true, reason: ok ? 'ok-fallback' : 'no-history' };
+      const h = await robinhoodHistory(address);
+      result = { ok: h.ok, ageHours: null, txCount: h.txCount, hasBalance: h.hasBalance, fallback: true, reason: h.ok ? 'ok-rh' : 'no-rh-history' };
     }
   } catch (_) {
     result = { ok: true, ageHours: null, softpass: true, reason: 'lookup-unavailable' };
@@ -95,7 +100,7 @@ function rejectionMessage() {
   if (cfg.ALCHEMY_ASSET_TRANSFERS_URL) {
     return `This wallet is too new on ${chain}. To keep out bots, connect a wallet with ${chain} history at least ${cfg.MIN_WALLET_AGE_HOURS}h old.`;
   }
-  return `This wallet has no ${chain} history yet. To keep out bots, connect a wallet you've used on ${chain} (one that has made at least one transaction there).`;
+  return `This wallet has no ${chain} history yet. To keep out bots, connect a wallet you've used on ${chain}.`;
 }
 
 module.exports = { checkWalletAge, rejectionMessage };

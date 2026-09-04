@@ -62,16 +62,15 @@ module.exports = {
   // =========================================================================
 
   // --- (1) Wallet history / age gate on ROBINHOOD CHAIN (Sybil resistance) -
-  // We check the connecting wallet's history on Robinhood Chain (an EVM L2,
-  // chain id 4663). Robinhood requires KYC, so a wallet with real Robinhood
-  // Chain activity is a strong "real human" signal — and a freshly generated
-  // bot wallet has none.
+  // We ONLY check the connecting wallet's history on Robinhood Chain (EVM L2,
+  // chain id 4663). Robinhood requires KYC, so real Robinhood Chain activity is
+  // a strong "real human" signal — and a freshly generated bot wallet has none.
   REQUIRE_WALLET_AGE: process.env.REQUIRE_WALLET_AGE !== 'false',
   MIN_WALLET_AGE_HOURS: Number(process.env.MIN_WALLET_AGE_HOURS || 24),
   CHAIN_NAME: process.env.CHAIN_NAME || 'Robinhood Chain',
   WALLET_CHAIN_ID: Number(process.env.WALLET_CHAIN_ID || 4663),
-  // Public Robinhood Chain RPC (no key). Used for the keyless history check:
-  // require the wallet to have sent >= FALLBACK_MIN_TX transactions on-chain.
+  // Public Robinhood Chain RPC (no key). Keyless history check: the wallet must
+  // have either sent >= FALLBACK_MIN_TX txs OR hold a balance on Robinhood Chain.
   WALLET_RPC_URL: process.env.WALLET_RPC_URL || 'https://rpc.mainnet.chain.robinhood.com',
   FALLBACK_MIN_TX: Number(process.env.FALLBACK_MIN_TX || 1),
   // OPTIONAL upgrade to TRUE time-based age (and to catch receive-only wallets):
