@@ -15,10 +15,11 @@ let playerPlaying = false;     // YT.PlayerState.PLAYING
 let lastMediaTime = -1;        // last getCurrentTime() reading
 let mediaAdvancing = true;     // did playback time move since last check?
 
-// --- live-stream status (resolved by our server) ---------------------------
-let liveNow = false;
+// --- stream status (resolved by our server) --------------------------------
+let streamMode = 'offline';    // 'live' | 'replay' | 'offline'
 let liveVideoId = null;
 let liveTitle = null;
+const streamOn = () => streamMode === 'live' || streamMode === 'replay';
 
 // --- active-presence ("still watching?") -----------------------------------
 let presenceOK = true;
@@ -63,14 +64,14 @@ function loadYouTubeApi() {
 async function refreshLive() {
   try {
     const s = await api('/api/live');
-    liveNow = !!s.live;
+    streamMode = s.mode || (s.live ? 'live' : 'offline');
     liveTitle = s.title || null;
     if (s.videoId && s.videoId !== liveVideoId) {
       liveVideoId = s.videoId;
-      buildPlayerWhenReady(); // (re)load the current live video
+      buildPlayerWhenReady(); // (re)load the current live/replay video
     }
-    if (!liveNow && ytPlayer) { try { ytPlayer.pauseVideo(); } catch (_) {} }
-    updateLiveBadge();
+    if (streamMode === 'offline' && ytPlayer) { try { ytPlayer.pauseVideo(); } catch (_) {} }
+    updateStreamUi();
   } catch (_) { /* keep last known */ }
 }
 
@@ -102,16 +103,36 @@ function pollMediaTime() {
   lastMediaTime = t;
 }
 
-function updateLiveBadge() {
+function updateStreamUi() {
+  const live = streamMode === 'live';
+  const replay = streamMode === 'replay';
   const b = document.querySelector('.live');
   if (b) {
-    b.textContent = liveNow ? 'LIVE' : 'OFFLINE';
-    b.style.background = liveNow ? 'var(--accent)' : '#555';
+    b.textContent = live ? 'LIVE' : replay ? 'REPLAY' : 'OFFLINE';
+    b.style.background = live ? 'var(--accent)' : replay ? 'var(--warn)' : '#555';
   }
   const dot = $('npDot');
-  if (dot) dot.classList.toggle('off', !liveNow);
+  if (dot) dot.classList.toggle('off', !streamOn());
   const show = $('showTitle');
-  if (show) show.textContent = liveNow && liveTitle ? '· ' + liveTitle : (liveNow ? '· Live now' : '· Offline');
+  if (show) {
+    show.textContent = live
+      ? (liveTitle ? '· ' + liveTitle : '· Live now')
+      : replay
+        ? (liveTitle ? '· Replay: ' + liveTitle : '· Replay')
+        : '· Offline';
+  }
+  const banner = $('streamBanner');
+  if (banner) {
+    if (replay) {
+      banner.innerHTML = '<b>RAV is currently offline.</b> You\'re watching a recent broadcast — you still earn points. We\'ll switch to the live stream automatically when RAV goes online.';
+      banner.classList.remove('hidden');
+    } else if (streamMode === 'offline') {
+      banner.innerHTML = '<b>RAV is currently offline.</b> Live streaming will begin automatically when RAV goes online.';
+      banner.classList.remove('hidden');
+    } else {
+      banner.classList.add('hidden');
+    }
+  }
 }
 
 // ===========================================================================
@@ -125,7 +146,7 @@ function isForeground() {
 // anti-bot token — that's handled separately so we can still fetch one).
 function watchableNow() {
   if (!me) return false;
-  if (!liveNow) return false;          // RAV isn't live -> nothing to earn from
+  if (!streamOn()) return false;       // nothing playing (offline) -> nothing to earn from
   if (!isForeground()) return false;
   if (!presenceOK) return false;
   if (!playerReady) return false;      // player not up -> don't earn
@@ -144,7 +165,7 @@ function isEarning() {
 // Human-readable reason earning is off (for the status line).
 function notEarningReason() {
   if (!me) return 'Connect your wallet to start earning.';
-  if (!liveNow) return 'RAV is not live right now — earning resumes when the stream is live.';
+  if (streamMode === 'offline') return 'RAV is offline right now — earning resumes when a stream is playing.';
   if (!presenceOK) return 'Paused — confirm you are still watching.';
   if (!isForeground()) return 'Paused — keep this tab visible and focused to earn.';
   if (playerFailed && !playerReady) return 'Stream could not load — disable ad-blockers for this site and reload.';

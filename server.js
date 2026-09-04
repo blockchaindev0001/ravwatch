@@ -118,40 +118,69 @@ const YT_HEADERS = {
 };
 
 // Authoritative path: YouTube Data API (IP-independent, reliable on any host).
-async function resolveViaApi() {
-  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${cfg.YT_CHANNEL_ID}&eventType=live&type=video&maxResults=1&key=${cfg.YT_API_KEY}`;
+async function apiSearch(eventType) {
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${cfg.YT_CHANNEL_ID}&eventType=${eventType}&type=video&order=date&maxResults=1&key=${cfg.YT_API_KEY}`;
   const r = await fetch(url);
   const data = await r.json();
   const item = data.items && data.items[0];
   if (item && item.id && item.id.videoId) {
-    return { live: true, videoId: item.id.videoId, title: (item.snippet && item.snippet.title) || null };
+    return { videoId: item.id.videoId, title: (item.snippet && item.snippet.title) || null };
   }
-  return { live: false, videoId: null, title: null };
+  return null;
+}
+
+async function resolveViaApi() {
+  const live = await apiSearch('live');
+  if (live) return { mode: 'live', live: true, videoId: live.videoId, title: live.title };
+  if (cfg.REPLAY_WHEN_OFFLINE) {
+    const done = await apiSearch('completed'); // most recent finished broadcast
+    if (done) return { mode: 'replay', live: false, videoId: done.videoId, title: done.title };
+  }
+  return { mode: 'offline', live: false, videoId: null, title: null };
 }
 
 // Keyless path: find the channel's candidate video, then CONFIRM it is truly
 // live now on its own watch page (channel /live page lacks that flag and is
 // true even for scheduled premieres).
+async function watchStatus(vid) {
+  const watch = await fetch(`https://www.youtube.com/watch?v=${vid}&hl=en&gl=US`, { headers: YT_HEADERS });
+  const w = await watch.text();
+  return {
+    liveNow: /"isLiveNow":true/.test(w),
+    upcoming: /"isUpcoming":true/.test(w),
+    ended: /"actualEndTime"/.test(w),
+    title: ((w.match(/<title>([^<]*)<\/title>/) || [])[1] || '').replace(/ - YouTube$/, '').trim() || null,
+  };
+}
+
 async function resolveViaScrape() {
+  // 1) Is the channel actually live right now?
   const chan = await fetch(`https://www.youtube.com/channel/${cfg.YT_CHANNEL_ID}/live?hl=en&gl=US`, { headers: YT_HEADERS });
   const chanHtml = await chan.text();
   const canon = chanHtml.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([A-Za-z0-9_-]{11})">/);
   const vid = canon ? canon[1] : (chanHtml.match(/"videoId":"([A-Za-z0-9_-]{11})"/) || [])[1] || null;
-  if (!vid) return { live: false, videoId: null, title: null };
+  if (vid) {
+    const s = await watchStatus(vid);
+    if (s.liveNow && !s.upcoming && !s.ended) return { mode: 'live', live: true, videoId: vid, title: s.title };
+  }
 
-  const watch = await fetch(`https://www.youtube.com/watch?v=${vid}&hl=en&gl=US`, { headers: YT_HEADERS });
-  const wHtml = await watch.text();
-  const liveNow = /"isLiveNow":true/.test(wHtml);
-  const upcoming = /"isUpcoming":true/.test(wHtml);
-  const ended = /"actualEndTime"/.test(wHtml);
-  const title = ((wHtml.match(/<title>([^<]*)<\/title>/) || [])[1] || '').replace(/ - YouTube$/, '').trim() || null;
-  const isLive = liveNow && !upcoming && !ended;
-  return { live: isLive, videoId: isLive ? vid : null, title };
+  // 2) Not live -> fall back to a recent finished broadcast (a real recording).
+  if (cfg.REPLAY_WHEN_OFFLINE) {
+    const streams = await fetch(`https://www.youtube.com/channel/${cfg.YT_CHANNEL_ID}/streams?hl=en&gl=US`, { headers: YT_HEADERS });
+    const sHtml = await streams.text();
+    const ids = [...new Set((sHtml.match(/"videoId":"([A-Za-z0-9_-]{11})"/g) || []).map((m) => m.slice(11, 22)))];
+    // Pick the first playable past broadcast: not upcoming and not currently live.
+    for (const id of ids.slice(0, 8)) {
+      const s = await watchStatus(id);
+      if (!s.upcoming && !s.liveNow) return { mode: 'replay', live: false, videoId: id, title: s.title };
+    }
+  }
+  return { mode: 'offline', live: false, videoId: null, title: null };
 }
 
 async function resolveLive() {
   if (cfg.YT_VIDEO_ID) {
-    return { live: true, videoId: cfg.YT_VIDEO_ID, title: 'RAV (manual)' };
+    return { mode: 'live', live: true, videoId: cfg.YT_VIDEO_ID, title: 'RAV (manual)' };
   }
   if (Date.now() - liveCache.at < cfg.LIVE_CACHE_MS) return liveCache;
   try {
@@ -165,7 +194,7 @@ async function resolveLive() {
 
 app.get('/api/live', async (_req, res) => {
   const s = await resolveLive();
-  res.json({ live: s.live, videoId: s.videoId, title: s.title });
+  res.json({ mode: s.mode || (s.live ? 'live' : 'offline'), live: s.live, videoId: s.videoId, title: s.title });
 });
 
 // --- wallet auth (Sign-In-With-Ethereum) + anti-bot layers -----------------

@@ -30,6 +30,10 @@ module.exports = {
   // HTML-scrape can be served different/blocked content from a datacenter IP).
   // Get one free: Google Cloud Console -> APIs -> YouTube Data API v3.
   YT_API_KEY: process.env.YT_API_KEY || '',
+  // When RAV is NOT live, fall back to playing a recent recorded broadcast so
+  // viewers can keep earning (same rate). Auto-switches back to live when RAV
+  // goes online. Set to 'false' to just show OFFLINE instead.
+  REPLAY_WHEN_OFFLINE: process.env.REPLAY_WHEN_OFFLINE !== 'false',
 
   // --- Earning mechanics (server-authoritative) --------------------------
   // One point per TICK_SECONDS of real, continuous, foreground watch time.
