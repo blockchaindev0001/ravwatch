@@ -500,10 +500,19 @@ async function connectWallet() {
     }
     const address = accounts && accounts[0];
     if (!address) throw new Error('No account selected.');
-    $('authErr').textContent = usingWC ? 'Open your wallet app to sign in…' : '';
     // 1) get the message to sign, 2) sign it, 3) verify server-side.
     const { message } = await api('/api/wallet/nonce', { method: 'POST', body: JSON.stringify({ address }) });
+    if (usingWC) {
+      // On mobile the wallet app must be re-opened to approve the signature —
+      // give the user a clear prompt + a link back to it.
+      const redirect = (wcProvider && wcProvider.session && wcProvider.session.peer
+        && wcProvider.session.peer.metadata && wcProvider.session.peer.metadata.redirect) || {};
+      const walletLink = redirect.native || redirect.universal || 'https://metamask.app.link/';
+      $('authErr').innerHTML = 'Now approve the sign-in request in your wallet app. '
+        + '<a href="' + walletLink + '" style="color:var(--accent2);font-weight:600">Open wallet →</a>';
+    }
     const signature = await provider.request({ method: 'personal_sign', params: [message, address] });
+    $('authErr').textContent = '';
     const user = await api('/api/wallet/verify', { method: 'POST', body: JSON.stringify({ address, signature }) });
     if (!user.username) promptUsername(user);
     else setLoggedIn(user);
