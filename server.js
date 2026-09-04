@@ -184,7 +184,16 @@ async function resolveLive() {
   }
   if (Date.now() - liveCache.at < cfg.LIVE_CACHE_MS) return liveCache;
   try {
-    const res = cfg.YT_API_KEY ? await resolveViaApi() : await resolveViaScrape();
+    // Free HTML method is primary (unlimited). The Data API costs 100 units per
+    // search.list call and the free quota is only 10k/day, so use it ONLY as a
+    // fallback when scraping comes up empty.
+    let res = await resolveViaScrape();
+    if (res.mode === 'offline' && cfg.YT_API_KEY) {
+      try {
+        const apiRes = await resolveViaApi();
+        if (apiRes.mode !== 'offline') res = apiRes;
+      } catch (_) { /* API quota/error -> keep scrape result */ }
+    }
     liveCache = { at: Date.now(), ...res };
   } catch (_) {
     liveCache = { ...liveCache, at: Date.now() }; // keep last known; retry next window
