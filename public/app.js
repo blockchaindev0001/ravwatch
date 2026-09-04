@@ -416,11 +416,62 @@ function displayName(user) {
   return user.username || shortAddr(user.address);
 }
 
+// WalletConnect provider (created on demand). Lets a normal mobile/desktop
+// browser with no wallet extension connect a wallet app (QR on desktop,
+// deep-link on mobile) and approve there, staying on this site.
+let wcProvider = null;
+async function initWalletConnect() {
+  if (wcProvider) return wcProvider;
+  if (!cfg.walletConnectProjectId) return null;
+  const ns = window['@walletconnect/ethereum-provider'];
+  const EP = ns && (ns.EthereumProvider || ns.default);
+  if (!EP) return null;
+  wcProvider = await EP.init({
+    projectId: cfg.walletConnectProjectId,
+    chains: [1],
+    optionalChains: [4663, 42161, 137],
+    showQrModal: true,
+    methods: ['personal_sign', 'eth_sendTransaction'],
+    events: ['accountsChanged', 'chainChanged'],
+    metadata: {
+      name: cfg.siteName || 'RAV Watch & Earn',
+      description: "Watch Real America's Voice and earn points",
+      url: location.origin,
+      icons: [location.origin + '/favicon.ico'],
+    },
+  });
+  return wcProvider;
+}
+
+let providerListenersBound = false;
+function bindProviderEvents(provider) {
+  if (providerListenersBound || !provider || !provider.on) return;
+  if (provider === window.ethereum) return; // injected: boot() already handles it
+  providerListenersBound = true;
+  provider.on('accountsChanged', async () => {
+    try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch (_) {}
+    setLoggedOut();
+  });
+  provider.on('disconnect', () => setLoggedOut());
+}
+
 async function connectWallet() {
   $('authErr').textContent = '';
-  if (!window.ethereum) {
-    // Mobile browsers have no wallet extension. Deep-link into the MetaMask app's
-    // built-in browser, where a provider IS injected, so Connect works there.
+  let provider = window.ethereum || null;
+
+  // No injected wallet -> try WalletConnect (works in any browser).
+  if (!provider && cfg.walletConnectProjectId) {
+    try {
+      provider = await initWalletConnect();
+      if (provider) { $('authErr').textContent = 'Opening your wallet…'; await provider.enable(); }
+    } catch (e) {
+      $('authErr').textContent = (e && e.message) || 'Wallet connection cancelled.';
+      return;
+    }
+  }
+
+  // Still nothing -> mobile deep-link into MetaMask app, else install prompt.
+  if (!provider) {
     const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
     if (isMobile) {
       $('authErr').textContent = 'Opening in the MetaMask app…';
@@ -430,20 +481,22 @@ async function connectWallet() {
     $('authErr').innerHTML = 'No EVM wallet found. <a href="https://metamask.io/download/" target="_blank" rel="noopener" style="color:var(--accent2)">Install MetaMask</a>, then reload.';
     return;
   }
+
+  bindProviderEvents(provider);
   const btn = $('connectBtn');
   btn.disabled = true; btn.textContent = 'Connecting…';
   try {
-    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    let accounts = await provider.request({ method: 'eth_requestAccounts' });
+    if ((!accounts || !accounts.length) && provider.accounts) accounts = provider.accounts;
     const address = accounts && accounts[0];
     if (!address) throw new Error('No account selected.');
     // 1) get the message to sign, 2) sign it, 3) verify server-side.
     const { message } = await api('/api/wallet/nonce', { method: 'POST', body: JSON.stringify({ address }) });
-    const signature = await window.ethereum.request({ method: 'personal_sign', params: [message, address] });
+    const signature = await provider.request({ method: 'personal_sign', params: [message, address] });
     const user = await api('/api/wallet/verify', { method: 'POST', body: JSON.stringify({ address, signature }) });
     if (!user.username) promptUsername(user);
     else setLoggedIn(user);
   } catch (e) {
-    // MetaMask user-rejection comes back as code 4001.
     $('authErr').textContent = e && e.code === 4001 ? 'You cancelled the wallet request.' : (e.message || 'Wallet connection failed.');
   } finally {
     btn.disabled = false; btn.textContent = 'Connect Wallet';

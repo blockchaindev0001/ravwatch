@@ -13,6 +13,12 @@ module.exports = {
   // The real name of the channel being streamed, shown on the live player.
   CHANNEL_NAME: process.env.CHANNEL_NAME || "Real America's Voice",
 
+  // WalletConnect Project ID (free: https://cloud.reown.com). Lets mobile users
+  // connect their wallet app from a normal browser (no extension needed) and
+  // approve in the app, staying on the site. Leave blank to disable WalletConnect
+  // (mobile then falls back to the MetaMask app deep-link).
+  WALLETCONNECT_PROJECT_ID: process.env.WALLETCONNECT_PROJECT_ID || '',
+
   // --- The live stream (Real America's Voice, live on YouTube) -----------
   // RAV livestreams on YouTube. The server looks up whatever video is CURRENTLY
   // LIVE on this channel (so the id never has to be hand-updated), and the

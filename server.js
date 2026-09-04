@@ -93,6 +93,7 @@ app.get('/api/config', (_req, res) => {
   res.json({
     siteName: cfg.SITE_NAME,
     channelName: cfg.CHANNEL_NAME,
+    walletConnectProjectId: cfg.WALLETCONNECT_PROJECT_ID || null,
     tickSeconds: cfg.TICK_SECONDS,
     pointsPerTick: cfg.POINTS_PER_TICK,
     heartbeatMs: cfg.HEARTBEAT_MS,
